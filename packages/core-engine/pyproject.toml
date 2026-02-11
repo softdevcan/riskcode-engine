@@ -1,0 +1,18 @@
+[tool.poetry]
+name = "riskcode-engine-core"
+version = "0.1.0"
+description = "Core engine for RiskCodeAI"
+authors = ["RiskCodeAI Team"]
+readme = "README.md"
+packages = [{include = "riskcodeai", from = "src"}]
+
+[tool.poetry.dependencies]
+python = "^3.12"
+langchain = "^0.3"
+ollama = "^0.4"
+tree-sitter = "^0.22"
+maturin = "^1.7"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
