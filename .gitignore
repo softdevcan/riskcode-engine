@@ -1,0 +1,112 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+*.pyc
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.hypothesis/
+*.log
+
+# Poetry
+poetry.lock  # Comment this out if you want to commit lock file
+.venv/
+env/
+venv/
+ENV/
+
+# Rust
+target/
+Cargo.lock  # Uncomment if library project
+**/*.rs.bk
+*.pdb
+
+# Node.js / Next.js
+node_modules/
+.next/
+out/
+.cache/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+package-lock.json  # If using pnpm/yarn
+.turbo/
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+.envrc
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+postgres-data/
+
+# IDE
+.vscode/
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Ollama models (large files)
+models/
+*.gguf
+*.bin
+
+# Cache & Logs
+.cache/
+*.log
+logs/
+temp/
+tmp/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Coverage & Testing
+coverage/
+.nyc_output/
+test-results/
+
+# Build artifacts
+*.whl
+*.tar.gz
+
+# Documentation build
+docs/_build/
+docs/
+analysis-docs/
+site/
+
+# Secrets (double-check these are ignored!)
+*.pem
+*.key
+secrets/
