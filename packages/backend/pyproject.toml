@@ -7,13 +7,14 @@ readme = "README.md"
 packages = [{include = "app"}]
 
 [tool.poetry.dependencies]
-python = "^3.12"
+python = "~3.12"
 fastapi = {extras = ["standard"], version = "^0.115"}
 uvicorn = {extras = ["standard"], version = "^0.30.0"}
 sqlalchemy = "^2.0.35"
 pydantic = "^2.9"
 alembic = "^1.13"
 asyncpg = "^0.29"
+riskcode-engine-shared = {path = "../shared", develop = true}
 
 [build-system]
 requires = ["poetry-core"]
