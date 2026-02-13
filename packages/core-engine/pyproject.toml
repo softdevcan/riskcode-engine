@@ -7,7 +7,7 @@ readme = "README.md"
 packages = [{include = "riskcodeai", from = "src"}]
 
 [tool.poetry.scripts]
-riskcode = "riskcodeai.cli.entry:main"
+riskcodeai = "riskcodeai.cli.entry:main"
 
 [tool.poetry.dependencies]
 python = "~3.12"
@@ -15,8 +15,19 @@ langchain = "^0.3"
 ollama = "^0.4"
 tree-sitter = "^0.22"
 maturin = "^1.7"
+typer = {extras = ["all"], version = "^0.15"}
+rich = "^13.0"
+pyyaml = "^6.0"
 riskcode-engine-shared = {path = "../shared", develop = true}
 rust_native = {path = "rust_native", develop = true}
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.0"
+pytest-cov = "^6.0"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
 
 [build-system]
 requires = ["poetry-core"]
