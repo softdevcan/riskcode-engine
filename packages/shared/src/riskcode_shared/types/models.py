@@ -143,6 +143,9 @@ class VulnerabilityInfo(BaseModel):
     published: Optional[datetime] = Field(default=None, description="Date vulnerability was published")
     modified: Optional[datetime] = Field(default=None, description="Date vulnerability was last modified")
     ai_summary: Optional[str] = Field(default=None, description="AI-generated plain-language summary")
+    changelog_summary: Optional[str] = Field(default=None, description="AI-generated changelog summary for upgrade")
+    breaking_changes: list[str] = Field(default_factory=list, description="Detected breaking changes in upgrade path")
+    update_recommendation: Optional[str] = Field(default=None, description="AI-generated upgrade recommendation")
 
     @classmethod
     def severity_from_cvss(cls, score: float) -> Severity:

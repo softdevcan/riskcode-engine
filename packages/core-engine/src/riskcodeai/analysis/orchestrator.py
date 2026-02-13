@@ -4,10 +4,10 @@ Coordinates the complete analysis workflow:
 1. Ecosystem detection
 2. Manifest parsing
 3. Vulnerability scanning (OSV.dev)
-4. AI-powered summaries (Ollama)
-5. (Future) Reachability analysis
-6. (Future) Risk scoring
-7. Report generation
+4. Risk scoring (composite CVSS + usage + fixability + age)
+5. AI-powered summaries (Ollama)
+6. Changelog generation & breaking change analysis
+7. Report generation (JSON / HTML)
 """
 
 from __future__ import annotations
@@ -20,10 +20,13 @@ from pathlib import Path
 from riskcode_shared.types.models import DependencyGraph, ScanResult, VulnerabilityInfo
 
 from riskcodeai.config import RiskCodeConfig, load_config
+from riskcodeai.llm.changelog_generator import ChangelogGenerator
 from riskcodeai.llm.ollama_bridge import OllamaBridge
 from riskcodeai.osv.cache import VulnerabilityCache
 from riskcodeai.osv.client import OSVClient
 from riskcodeai.parsers import detect_ecosystem, parse_project
+from riskcodeai.reporting.html_report import HTMLReportGenerator
+from riskcodeai.scoring.risk_scorer import RiskBreakdown, RiskScorer, ScoringWeights
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +36,7 @@ class AnalysisOrchestrator:
 
     Sprint 1: Manifest parsing and basic reporting.
     Sprint 2: Vulnerability scanning (OSV.dev) and AI summaries (Ollama).
+    Sprint 3: Risk scoring, changelog generation, and HTML reports.
     """
 
     def __init__(self, config: RiskCodeConfig | None = None):
@@ -70,11 +74,20 @@ class AnalysisOrchestrator:
         if enable_osv and graph:
             vulnerabilities = self._scan_vulnerabilities(graph)
 
-        # Step 3: Generate AI summaries (Ollama)
+        # Step 3: Score risks (always runs if vulns found)
+        risk_breakdowns: list[RiskBreakdown] = []
+        if vulnerabilities:
+            risk_breakdowns = self._score_risks(vulnerabilities, graph)
+
+        # Step 4: Generate AI summaries (Ollama)
         if enable_ai and vulnerabilities:
             self._enrich_with_ai(vulnerabilities)
 
-        # Step 4: Create scan result
+        # Step 5: Generate changelogs (Ollama)
+        if enable_ai and vulnerabilities:
+            self._generate_changelogs(vulnerabilities, graph)
+
+        # Step 6: Create scan result
         result = ScanResult(
             project_name=Path(directory).name,
             dependency_graph=graph,
@@ -104,6 +117,46 @@ class AnalysisOrchestrator:
                 return vulns
         except Exception as e:
             logger.error("OSV.dev scan failed: %s", e)
+            return []
+
+    def _score_risks(
+        self,
+        vulnerabilities: list[VulnerabilityInfo],
+        graph: DependencyGraph | None = None,
+    ) -> list[RiskBreakdown]:
+        """Calculate composite risk scores for all vulnerabilities.
+
+        Updates each VulnerabilityInfo.risk_score in-place and returns
+        the detailed breakdowns.
+        """
+        try:
+            # Load scoring weights from config
+            weights = ScoringWeights(
+                cvss=self.config.get("scoring.weight_cvss", 0.40),
+                usage_impact=self.config.get("scoring.weight_usage", 0.25),
+                fixability=self.config.get("scoring.weight_fixability", 0.20),
+                age=self.config.get("scoring.weight_age", 0.15),
+            )
+            scorer = RiskScorer(weights=weights)
+            breakdowns = scorer.score_all(vulnerabilities, graph)
+
+            # Update VulnerabilityInfo with computed risk scores
+            score_map = {b.osv_id: b.total_score for b in breakdowns}
+            for vuln in vulnerabilities:
+                if vuln.osv_id in score_map:
+                    vuln.risk_score = score_map[vuln.osv_id]
+
+            logger.info(
+                "Risk scoring complete: highest=%s (%.1f), lowest=%s (%.1f)",
+                breakdowns[0].osv_id if breakdowns else "N/A",
+                breakdowns[0].total_score if breakdowns else 0,
+                breakdowns[-1].osv_id if breakdowns else "N/A",
+                breakdowns[-1].total_score if breakdowns else 0,
+            )
+            return breakdowns
+
+        except Exception as e:
+            logger.error("Risk scoring failed: %s", e)
             return []
 
     def _enrich_with_ai(
@@ -136,6 +189,45 @@ class AnalysisOrchestrator:
         except Exception as e:
             logger.error("AI enrichment failed: %s", e)
 
+    def _generate_changelogs(
+        self,
+        vulnerabilities: list[VulnerabilityInfo],
+        graph: DependencyGraph | None = None,
+    ) -> None:
+        """Generate changelog analysis and update recommendations."""
+        base_url = self.config.get("llm.base_url", "http://localhost:11434")
+        model = self.config.get("llm.model", "deepseek-coder-v2:16b-q4")
+
+        try:
+            with OllamaBridge(base_url=base_url, model=model) as llm:
+                if not llm.is_available():
+                    logger.info("Ollama not available — skipping changelog generation.")
+                    return
+
+                generator = ChangelogGenerator(bridge=llm)
+                results = generator.batch_generate(
+                    vulnerabilities,
+                    graph=graph,
+                    max_items=self.config.get("llm.max_changelog_items", 10),
+                )
+
+                # Map results back to vulnerabilities
+                for vuln in vulnerabilities:
+                    if vuln.osv_id in results:
+                        entry = results[vuln.osv_id]
+                        vuln.update_recommendation = entry.get("update_recommendation")
+                        if entry.get("breaking_change"):
+                            vuln.breaking_changes = [entry["breaking_change"]]
+
+                logger.info(
+                    "Changelog analysis complete for %d vulnerabilities",
+                    len(results),
+                )
+        except Exception as e:
+            logger.error("Changelog generation failed: %s", e)
+
+    # ─── Report Generation ────────────────────────────────────────────
+
     def generate_report(
         self,
         result: ScanResult,
@@ -146,14 +238,14 @@ class AnalysisOrchestrator:
 
         Args:
             result: The scan result to report on.
-            format: Output format ('json' for now).
+            format: Output format ('json' or 'html').
             output_path: File path to write the report (optional).
 
         Returns:
             The report content as string.
         """
-        if format == "json":
-            report = self._generate_json_report(result)
+        if format == "html":
+            report = self._generate_html_report(result)
         else:
             report = self._generate_json_report(result)
 
@@ -161,6 +253,11 @@ class AnalysisOrchestrator:
             Path(output_path).write_text(report, encoding="utf-8")
 
         return report
+
+    def _generate_html_report(self, result: ScanResult) -> str:
+        """Generate HTML report using the template engine."""
+        generator = HTMLReportGenerator()
+        return generator.generate(result)
 
     def _generate_json_report(self, result: ScanResult) -> str:
         """Generate JSON report with dependencies and vulnerabilities."""
@@ -194,10 +291,13 @@ class AnalysisOrchestrator:
                 "cve_id": vuln.cve_id,
                 "severity": vuln.severity.value,
                 "cvss_score": vuln.cvss_score,
+                "risk_score": vuln.risk_score,
                 "affected_dependency": vuln.affected_dependency,
                 "summary": vuln.summary,
                 "fixed_version": vuln.fixed_version,
                 "ai_summary": vuln.ai_summary,
+                "update_recommendation": vuln.update_recommendation,
+                "breaking_changes": vuln.breaking_changes,
             }
             report_data["vulnerabilities"].append(vuln_data)
 

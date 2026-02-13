@@ -161,6 +161,11 @@ def scan(
 
             if output:
                 console.print(f"\n[green]>[/green] Report saved to: [bold]{output}[/bold]")
+            elif format == "html":
+                # Auto-save HTML to a default location
+                html_path = str(target_path / "riskcodeai-report.html")
+                Path(html_path).write_text(report, encoding="utf-8")
+                console.print(f"\n[green]>[/green] HTML report saved to: [bold]{html_path}[/bold]")
             else:
                 if format == "json":
                     console.print("\n[bold]Report (JSON):[/bold]")
@@ -221,21 +226,24 @@ def _display_vulnerability_table(vulnerabilities) -> None:
     table.add_column("ID", style="cyan", no_wrap=True)
     table.add_column("Severity", justify="center")
     table.add_column("CVSS", justify="center")
+    table.add_column("Risk", justify="center")
     table.add_column("Package", style="white")
     table.add_column("Fixed In", style="green")
-    table.add_column("Summary", max_width=50)
+    table.add_column("Summary", max_width=45)
 
     for vuln in vulnerabilities:
         sev = vuln.severity.value
         style = _SEVERITY_STYLES.get(sev.lower(), "")
         display_id = vuln.cve_id or vuln.osv_id
         fixed = vuln.fixed_version or "-"
-        summary = vuln.summary[:50] + "..." if len(vuln.summary) > 50 else vuln.summary
+        summary = vuln.summary[:45] + "..." if len(vuln.summary) > 45 else vuln.summary
+        risk_str = f"{vuln.risk_score:.1f}" if vuln.risk_score > 0 else "-"
 
         table.add_row(
             display_id,
             f"[{style}]{sev.upper()}[/{style}]",
             f"{vuln.cvss_score:.1f}",
+            risk_str,
             vuln.affected_dependency or "-",
             fixed,
             summary,
@@ -264,6 +272,13 @@ def _display_vulnerability_table(vulnerabilities) -> None:
         console.print(f"\n[bold]AI Summaries ({len(ai_vulns)}):[/bold]")
         for v in ai_vulns[:5]:
             console.print(f"  [{_SEVERITY_STYLES.get(v.severity.value.lower(), '')}]{v.osv_id}[/]: {v.ai_summary}")
+
+    # Show update recommendations if available
+    rec_vulns = [v for v in vulnerabilities if v.update_recommendation]
+    if rec_vulns:
+        console.print(f"\n[bold]Update Recommendations ({len(rec_vulns)}):[/bold]")
+        for v in rec_vulns[:5]:
+            console.print(f"  [cyan]{v.osv_id}[/]: {v.update_recommendation}")
 
 
 # ─── Config Commands ──────────────────────────────────────────────────────────
