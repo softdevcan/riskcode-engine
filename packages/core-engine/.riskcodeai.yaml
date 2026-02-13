@@ -1,0 +1,22 @@
+llm:
+  provider: ollama
+  model: deepseek-coder-v2:16b-q4
+  base_url: http://localhost:11434
+osv:
+  cache_ttl: 86400
+  offline_mode: false
+reachability:
+  enabled: true
+  languages:
+  - javascript
+  - typescript
+  - python
+  max_depth: 10
+scoring:
+  cvss_weight: 0.4
+  reachability_weight: 0.4
+  usage_weight: 0.2
+reports:
+  default_format: html
+  include_changelogs: true
+  include_call_paths: true

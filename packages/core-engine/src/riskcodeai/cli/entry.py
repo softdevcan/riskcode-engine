@@ -31,7 +31,7 @@ from riskcodeai.config import RiskCodeConfig, load_config, save_config
 
 app = typer.Typer(
     name="riskcodeai",
-    help="🛡️ RiskCodeAI — AI-powered dependency risk analysis engine",
+    help="RiskCodeAI -- AI-powered dependency risk analysis engine",
     add_completion=False,
     rich_markup_mode="rich",
 )
@@ -41,6 +41,16 @@ config_app = typer.Typer(
     help="Manage RiskCodeAI configuration",
 )
 app.add_typer(config_app, name="config")
+
+import os as _os
+import sys as _sys
+
+# Fix Windows console encoding (cp1254 Turkish can't handle Rich's Unicode chars)
+if _os.name == "nt":
+    if hasattr(_sys.stdout, "reconfigure"):
+        _sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if hasattr(_sys.stderr, "reconfigure"):
+        _sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 console = Console()
 error_console = Console(stderr=True)
@@ -78,18 +88,23 @@ def scan(
         "-f",
         help="Output format (json, html, pdf, sarif)",
     ),
+    osv: bool = typer.Option(
+        True,
+        "--osv/--no-osv",
+        help="Query OSV.dev for vulnerabilities",
+    ),
+    ai: bool = typer.Option(
+        True,
+        "--ai/--no-ai",
+        help="Generate AI summaries via Ollama",
+    ),
     reachability: bool = typer.Option(
         True,
         "--reachability/--no-reachability",
         help="Enable reachability analysis",
     ),
-    ai_changelog: bool = typer.Option(
-        True,
-        "--ai-changelog/--no-ai-changelog",
-        help="Generate AI changelogs",
-    ),
 ) -> None:
-    """🔍 Scan a project for dependency vulnerabilities."""
+    """Scan a project for dependency vulnerabilities."""
     target_dir = directory or str(Path.cwd())
     target_path = Path(target_dir)
 
@@ -97,11 +112,18 @@ def scan(
         error_console.print(f"[red]Error:[/red] Directory not found: {target_dir}")
         raise typer.Exit(code=EXIT_GENERAL_ERROR)
 
+    scan_modes = []
+    if osv:
+        scan_modes.append("OSV")
+    if ai:
+        scan_modes.append("AI")
+    modes_str = " + ".join(scan_modes) if scan_modes else "parse only"
+
     console.print(
         Panel(
             f"[bold blue]Scanning:[/bold blue] {target_path.resolve()}\n"
-            f"[dim]Format: {format}[/dim]",
-            title="🛡️ RiskCodeAI",
+            f"[dim]Format: {format} | Mode: {modes_str}[/dim]",
+            title="[bold]RiskCodeAI[/bold]",
             border_style="blue",
         )
     )
@@ -115,12 +137,20 @@ def scan(
                 directory=target_dir,
                 manifest=manifest,
                 ecosystem=ecosystem,
+                enable_osv=osv,
+                enable_ai=ai,
             )
 
         # Display results
         graph = result.dependency_graph
         if graph:
             _display_dependency_table(graph)
+
+            # Display vulnerabilities if found
+            if result.vulnerabilities:
+                _display_vulnerability_table(result.vulnerabilities)
+            elif osv:
+                console.print("\n[green]>[/green] No known vulnerabilities found")
 
             # Generate report
             report = orchestrator.generate_report(
@@ -130,13 +160,13 @@ def scan(
             )
 
             if output:
-                console.print(f"\n[green]✓[/green] Report saved to: [bold]{output}[/bold]")
+                console.print(f"\n[green]>[/green] Report saved to: [bold]{output}[/bold]")
             else:
                 if format == "json":
                     console.print("\n[bold]Report (JSON):[/bold]")
                     console.print_json(report)
 
-        console.print(f"\n[green]✓[/green] Scan completed successfully")
+        console.print(f"\n[green]>[/green] Scan completed successfully")
 
     except FileNotFoundError as e:
         error_console.print(f"[red]Error:[/red] {e}")
@@ -148,7 +178,7 @@ def scan(
 
 def _display_dependency_table(graph) -> None:
     """Display a rich table of dependencies."""
-    table = Table(title=f"📦 Dependencies ({graph.ecosystem.value})")
+    table = Table(title=f"Dependencies ({graph.ecosystem.value})")
     table.add_column("Package", style="cyan", no_wrap=True)
     table.add_column("Version", style="green")
     table.add_column("Type", style="yellow")
@@ -177,6 +207,65 @@ def _display_dependency_table(graph) -> None:
     )
 
 
+def _display_vulnerability_table(vulnerabilities) -> None:
+    """Display a rich table of vulnerabilities with severity coloring."""
+    _SEVERITY_STYLES = {
+        "critical": "bold red",
+        "high": "bright_red",
+        "medium": "yellow",
+        "low": "dim",
+        "unknown": "dim italic",
+    }
+
+    table = Table(title=f"Vulnerabilities ({len(vulnerabilities)} found)")
+    table.add_column("ID", style="cyan", no_wrap=True)
+    table.add_column("Severity", justify="center")
+    table.add_column("CVSS", justify="center")
+    table.add_column("Package", style="white")
+    table.add_column("Fixed In", style="green")
+    table.add_column("Summary", max_width=50)
+
+    for vuln in vulnerabilities:
+        sev = vuln.severity.value
+        style = _SEVERITY_STYLES.get(sev.lower(), "")
+        display_id = vuln.cve_id or vuln.osv_id
+        fixed = vuln.fixed_version or "-"
+        summary = vuln.summary[:50] + "..." if len(vuln.summary) > 50 else vuln.summary
+
+        table.add_row(
+            display_id,
+            f"[{style}]{sev.upper()}[/{style}]",
+            f"{vuln.cvss_score:.1f}",
+            vuln.affected_dependency or "-",
+            fixed,
+            summary,
+        )
+
+    console.print(table)
+
+    # Vulnerability summary
+    from collections import Counter
+    sev_counts = Counter(v.severity.value.lower() for v in vulnerabilities)
+    parts = []
+    for sev_name, color in [("critical", "red"), ("high", "bright_red"), ("medium", "yellow"), ("low", "dim")]:
+        count = sev_counts.get(sev_name, 0)
+        if count:
+            parts.append(f"[{color}]{count} {sev_name}[/{color}]")
+
+    fixable = sum(1 for v in vulnerabilities if v.fixed_version)
+    console.print(
+        f"\n[bold]Vulnerabilities:[/bold] {', '.join(parts)}"
+        f" | [green]{fixable}[/green] fixable"
+    )
+
+    # Show AI summaries if available
+    ai_vulns = [v for v in vulnerabilities if v.ai_summary]
+    if ai_vulns:
+        console.print(f"\n[bold]AI Summaries ({len(ai_vulns)}):[/bold]")
+        for v in ai_vulns[:5]:
+            console.print(f"  [{_SEVERITY_STYLES.get(v.severity.value.lower(), '')}]{v.osv_id}[/]: {v.ai_summary}")
+
+
 # ─── Config Commands ──────────────────────────────────────────────────────────
 
 @config_app.command("init")
@@ -186,13 +275,13 @@ def config_init(
         help="Directory to create config in (default: current directory)",
     ),
 ) -> None:
-    """📝 Create .riskcodeai.yaml configuration file."""
+    """Create .riskcodeai.yaml configuration file."""
     target_dir = directory or str(Path.cwd())
 
     try:
         config_path = save_config(target_dir)
         console.print(
-            f"[green]✓[/green] Config file created: [bold]{config_path}[/bold]"
+            f"[green]>[/green] Config file created: [bold]{config_path}[/bold]"
         )
     except Exception as e:
         error_console.print(f"[red]Error:[/red] Failed to create config: {e}")
@@ -206,7 +295,7 @@ def config_show(
         help="Directory to load config from",
     ),
 ) -> None:
-    """📋 Display current configuration."""
+    """Display current configuration."""
     target_dir = directory or str(Path.cwd())
     config = load_config(target_dir)
 
@@ -222,7 +311,7 @@ def config_set(
         None, "--dir", "-d", help="Directory with config file"
     ),
 ) -> None:
-    """⚙️ Set a configuration value."""
+    """Set a configuration value."""
     target_dir = directory or str(Path.cwd())
     config = load_config(target_dir)
 
@@ -234,7 +323,7 @@ def config_set(
 
     config.set(key, parsed_value)
     save_config(target_dir, config)
-    console.print(f"[green]✓[/green] Set [bold]{key}[/bold] = {parsed_value}")
+    console.print(f"[green]>[/green] Set [bold]{key}[/bold] = {parsed_value}")
 
 
 # ─── Main Entry Point ─────────────────────────────────────────────────────────

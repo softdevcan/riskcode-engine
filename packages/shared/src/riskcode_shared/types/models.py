@@ -107,21 +107,59 @@ class DependencyGraph(BaseModel):
         }
 
 
+class AffectedRange(BaseModel):
+    """Version range affected by a vulnerability."""
+
+    range_type: str = Field(default="ECOSYSTEM", description="Range type (ECOSYSTEM, SEMVER, GIT)")
+    introduced: Optional[str] = Field(default=None, description="Version where vulnerability was introduced")
+    fixed: Optional[str] = Field(default=None, description="Version where vulnerability was fixed")
+    last_affected: Optional[str] = Field(default=None, description="Last known affected version")
+
+
+class VulnerabilityReference(BaseModel):
+    """Reference link for a vulnerability."""
+
+    url: str = Field(description="Reference URL")
+    ref_type: str = Field(default="WEB", description="Reference type (ADVISORY, WEB, FIX, REPORT, etc.)")
+
+
 class VulnerabilityInfo(BaseModel):
-    """Vulnerability information (stub for future sprint)."""
+    """Vulnerability information from OSV.dev API."""
 
     id: UUID = Field(default_factory=uuid4)
-    cve_id: str = Field(description="CVE identifier")
+    osv_id: str = Field(description="OSV identifier (e.g., GHSA-xxxx, PYSEC-xxxx)")
+    cve_id: Optional[str] = Field(default=None, description="CVE identifier (e.g., CVE-2024-xxxx)")
+    aliases: list[str] = Field(default_factory=list, description="All known aliases (CVE, GHSA, etc.)")
+    summary: str = Field(default="", description="Short vulnerability summary from OSV")
+    details: Optional[str] = Field(default=None, description="Full vulnerability description")
     cvss_score: float = Field(default=0.0, description="CVSS base score (0-10)")
     severity: Severity = Field(default=Severity.LOW)
     reachability: ReachabilityStatus = Field(default=ReachabilityStatus.UNKNOWN)
     risk_score: float = Field(default=0.0, description="Composite risk score (0-10)")
-    affected_dependency: Optional[str] = Field(default=None)
-    description: Optional[str] = Field(default=None)
+    affected_dependency: Optional[str] = Field(default=None, description="Name of the affected package")
+    affected_ranges: list[AffectedRange] = Field(default_factory=list, description="Affected version ranges")
+    fixed_version: Optional[str] = Field(default=None, description="Earliest version that fixes the issue")
+    references: list[VulnerabilityReference] = Field(default_factory=list, description="Advisory/reference links")
+    published: Optional[datetime] = Field(default=None, description="Date vulnerability was published")
+    modified: Optional[datetime] = Field(default=None, description="Date vulnerability was last modified")
+    ai_summary: Optional[str] = Field(default=None, description="AI-generated plain-language summary")
+
+    @classmethod
+    def severity_from_cvss(cls, score: float) -> Severity:
+        """Derive severity from CVSS score."""
+        if score >= 9.0:
+            return Severity.CRITICAL
+        elif score >= 7.0:
+            return Severity.HIGH
+        elif score >= 4.0:
+            return Severity.MEDIUM
+        elif score > 0.0:
+            return Severity.LOW
+        return Severity.LOW
 
 
 class ScanResult(BaseModel):
-    """Complete scan result (stub for future sprint)."""
+    """Complete scan result with dependency graph and vulnerability data."""
 
     id: UUID = Field(default_factory=uuid4)
     project_name: str = Field(default="")
@@ -137,3 +175,24 @@ class ScanResult(BaseModel):
     @property
     def high_count(self) -> int:
         return sum(1 for v in self.vulnerabilities if v.severity == Severity.HIGH)
+
+    @property
+    def medium_count(self) -> int:
+        return sum(1 for v in self.vulnerabilities if v.severity == Severity.MEDIUM)
+
+    @property
+    def low_count(self) -> int:
+        return sum(1 for v in self.vulnerabilities if v.severity == Severity.LOW)
+
+    def vulnerability_summary(self) -> dict:
+        """Generate a summary dict of vulnerability counts by severity."""
+        return {
+            "total": len(self.vulnerabilities),
+            "critical": self.critical_count,
+            "high": self.high_count,
+            "medium": self.medium_count,
+            "low": self.low_count,
+            "with_fix": sum(1 for v in self.vulnerabilities if v.fixed_version),
+            "with_ai_summary": sum(1 for v in self.vulnerabilities if v.ai_summary),
+        }
+

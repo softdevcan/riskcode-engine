@@ -18,7 +18,7 @@ from riskcode_shared.constants.constants import (
     MANIFEST_SEARCH_ORDER,
 )
 
-from riskcodeai.parsers import package_json, requirements_txt, go_mod, pom_xml
+from riskcodeai.parsers import package_json, requirements_txt, go_mod, pom_xml, pyproject_toml
 
 # Type alias for parser functions
 ParserFunc = Callable[[str], DependencyGraph]
@@ -29,6 +29,7 @@ _PARSER_MAP: dict[str, ParserFunc] = {
     "package.json": package_json.parse,
     "package-lock.json": package_json.parse,  # Falls back to package.json logic
     "requirements.txt": requirements_txt.parse,
+    "pyproject.toml": pyproject_toml.parse,
     "go.mod": go_mod.parse,
     "pom.xml": pom_xml.parse,
 }
@@ -136,8 +137,9 @@ def parse_project(
     # Auto-detect
     detection = detect_ecosystem(directory)
     if detection is None:
+        resolved = dir_path.resolve()
         raise FileNotFoundError(
-            f"No supported manifest file found in: {directory}\n"
+            f"No supported manifest file found in: {resolved}\n"
             f"Supported files: {', '.join(MANIFEST_SEARCH_ORDER)}"
         )
 
